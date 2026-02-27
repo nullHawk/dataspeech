@@ -7,12 +7,17 @@ from einops import rearrange
 from huggingface_hub import hf_hub_download
 from pathlib import Path
 
-from pyannote.audio import Model, Inference
-from pyannote.audio.core.model import Specifications
-from pyannote.audio.core.task import Resolution
-from pyannote.audio.utils.multi_task import map_with_specifications
-from pyannote.audio.utils.signal import Binarize
-from pyannote.core import Segment, SlidingWindow, SlidingWindowFeature
+import warnings
+with warnings.catch_warnings():
+    # Newer pyannote.audio (3.3+) warns about torchcodec at import time.
+    # torchcodec is not needed here — we pass pre-loaded waveforms, not files.
+    warnings.filterwarnings("ignore", message="torchcodec", category=UserWarning)
+    from pyannote.audio import Model, Inference
+    from pyannote.audio.core.model import Specifications
+    from pyannote.audio.core.task import Resolution
+    from pyannote.audio.utils.multi_task import map_with_specifications
+    from pyannote.audio.utils.signal import Binarize
+    from pyannote.core import Segment, SlidingWindow, SlidingWindowFeature
 
 
 class _BrouhahaInference(Inference):
