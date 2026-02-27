@@ -1,4 +1,4 @@
-datasets[audio]
+datasets[audio]==3.2.0
 penn
 g2p
 demucs
