@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from ._torbi_compat import ensure_torbi
 ensure_torbi()
 import penn
@@ -23,43 +24,52 @@ interp_unvoiced_at = .065
 
 
 def pitch_apply(batch, rank=None, audio_column_name="audio", output_column_name="utterance_pitch", penn_batch_size=4096):
-    if isinstance(batch[audio_column_name], list):  
+    gpu = (rank or 0) % torch.cuda.device_count() if torch.cuda.device_count() > 0 else rank
+
+    if isinstance(batch[audio_column_name], list):
+        samples = batch[audio_column_name]
+
+        # Pad all audios to max length and stack into single tensor
+        arrays = [torch.tensor(s["array"][None, :]).float() for s in samples]
+        max_len = max(a.shape[-1] for a in arrays)
+        lengths = [a.shape[-1] for a in arrays]
+        padded = torch.stack([
+            F.pad(a, (0, max_len - a.shape[-1])) for a in arrays
+        ]).squeeze(1)  # (N, 1, max_len)
+
+        sr = samples[0]["sampling_rate"]
+
+        with torch.no_grad():
+            pitch, periodicity = penn.from_audio(
+                padded, sr,
+                hopsize=hopsize, fmin=fmin, fmax=fmax,
+                checkpoint=checkpoint, batch_size=penn_batch_size,
+                center=center, interp_unvoiced_at=interp_unvoiced_at,
+                gpu=gpu,
+            )
+
+        # Mask out padded regions per sample
         utterance_pitch_mean = []
         utterance_pitch_std = []
-        for sample in batch[audio_column_name]:
-            # Infer pitch and periodicity
+        for i, orig_len in enumerate(lengths):
+            real_frames = int(orig_len / (sr * hopsize))
+            p = pitch[i, :real_frames]
+            utterance_pitch_mean.append(p.mean().cpu())
+            utterance_pitch_std.append(p.std().cpu())
+
+        batch[f"{output_column_name}_mean"] = utterance_pitch_mean
+        batch[f"{output_column_name}_std"] = utterance_pitch_std
+    else:
+        sample = batch[audio_column_name]
+        with torch.no_grad():
             pitch, periodicity = penn.from_audio(
                 torch.tensor(sample["array"][None, :]).float(),
                 sample["sampling_rate"],
-                hopsize=hopsize,
-                fmin=fmin,
-                fmax=fmax,
-                checkpoint=checkpoint,
-                batch_size=penn_batch_size,
-                center=center,
-                interp_unvoiced_at=interp_unvoiced_at,
-                gpu=(rank or 0)% torch.cuda.device_count() if torch.cuda.device_count() > 0 else rank
-                )
-            
-            utterance_pitch_mean.append(pitch.mean().cpu())
-            utterance_pitch_std.append(pitch.std().cpu())
-            
-        batch[f"{output_column_name}_mean"] = utterance_pitch_mean 
-        batch[f"{output_column_name}_std"] = utterance_pitch_std 
-    else:
-        sample = batch[audio_column_name]
-        pitch, periodicity = penn.from_audio(
-                torch.tensor(sample["array"][None, :]).float(),
-                sample["sampling_rate"],
-                hopsize=hopsize,
-                fmin=fmin,
-                fmax=fmax,
-                checkpoint=checkpoint,
-                batch_size=penn_batch_size,
-                center=center,
-                interp_unvoiced_at=interp_unvoiced_at,
-                gpu=(rank or 0)% torch.cuda.device_count() if torch.cuda.device_count() > 0 else rank
-                )        
+                hopsize=hopsize, fmin=fmin, fmax=fmax,
+                checkpoint=checkpoint, batch_size=penn_batch_size,
+                center=center, interp_unvoiced_at=interp_unvoiced_at,
+                gpu=gpu,
+            )
         batch[f"{output_column_name}_mean"] = pitch.mean().cpu()
         batch[f"{output_column_name}_std"] = pitch.std().cpu()
 

@@ -171,8 +171,9 @@ _binarize = Binarize(onset=0.780, offset=0.780)
 
 def _run_inference(sample, inference):
     """Run inference on a single audio sample and return annotation, snr, c50."""
-    segmentations = inference({"sample_rate": sample["sampling_rate"],
-                               "waveform": torch.tensor(sample["array"][None, :]).to(inference.device).float()})
+    with torch.no_grad():
+        segmentations = inference({"sample_rate": sample["sampling_rate"],
+                                   "waveform": torch.tensor(sample["array"][None, :]).to(inference.device).float()})
 
     # Extract VAD column and binarize (replicates RegressiveActivityDetectionPipeline.apply)
     vad_scores = SlidingWindowFeature(
